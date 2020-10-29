@@ -5,7 +5,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 import cv2
 
-
+# Grid sizes
+X_SIZE = 13
+Y_SIZE = 11
 
 ColorClasses = {
     ord('w') : "Water",
@@ -26,19 +28,17 @@ ClassToColor = {
     ord('o') : np.array([255,128,0,255])
 }
 
-class ColorData:
-    LABEL_SIZE = 1
+class SquareData:
     COLOR_SIZE = 4
+    SQUARE_SIZE = X_SIZE * Y_SIZE
     SIZE_INCREMENT = 100
-    data_size = 0
 
-    def __init__(self, data_size):
+    def __init__(self):
         self.size = 0
         self.capacity = self.SIZE_INCREMENT
-        self.data_size = data_size * self.COLOR_SIZE
+        self.data_size = self.SQUARE_SIZE * self.COLOR_SIZE
 
         # Color point (rgb)
-        #self.X = np.empty((self.capacity,self.COLOR_SIZE))
         self.X = np.empty((self.capacity, self.data_size))
         # Labels (int) from ColorClasses
         self.y = np.empty((self.capacity))
@@ -65,10 +65,8 @@ class ColorData:
 
 class Segmenter:
     
-    window_size = 2
-    color_data = ColorData((window_size * 2) ** 2)
+    square_data = SquareData()
     current_segment = 0
-    current_color = None
     img = None
     clf = None
     record = True
@@ -76,22 +74,22 @@ class Segmenter:
     def __init__(self, img):
         self.img = img
 
-    def capture_color(self, x, y):
-        xl = x - self.window_size
-        xr = x + self.window_size
-        yu = y - self.window_size
-        yd = y + self.window_size
-        window = self.img[xl:xr,yu:yd]
-        return window.flatten()
+    def capture_square(self, x, y):
+        x_0 = (x // X_SIZE) * X_SIZE
+        x_1 = x_0 + X_SIZE
+        y_0 = (y // Y_SIZE) * Y_SIZE
+        y_1 = y_0 + Y_SIZE
+        square = self.img[y_0:y_1, x_0:x_1]
+        return square.flatten()
     
     def get_capture(self, event,x,y,flags,param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.current_color = self.capture_color(y,x)
+            square = self.capture_square(x,y)
             print(x,y)
             if self.record:
-                self.record_data()
+                self.record_square(square)
             else:
-                prediction_xy = self.predict(np.array([self.current_color]))
+                prediction_xy = self.predict(np.array(square))
                 print(ColorClasses.get(prediction_xy[0]))
 
 
@@ -99,10 +97,8 @@ class Segmenter:
         self.record = not self.record
         print("Recording" if self.record else "Predicting")
 
-    def record_data(self):
-        self.color_data.append(X=self.current_color, y=self.current_segment)
-        self.print_current_segment()
-
+    def record_square(self, square):
+        self.square_data.append(X=square, y=self.current_segment)
     
     def change_segment(self, s):
         self.current_segment = s
@@ -112,36 +108,46 @@ class Segmenter:
         print(ColorClasses.get(self.current_segment))
 
     def print(self):
-        print(self.color_data.get_X())
-        print(self.color_data.get_y())
+        print(self.square_data.get_X())
+        print(self.square_data.get_y())
     
     def fit_model(self):
-        print("Fitting model for %d datapoints" % self.color_data.size)
+        print("Fitting model for %d datapoints" % self.square_data.size)
         self.clf = make_pipeline(StandardScaler(), SVC(gamma='auto'))
-        self.clf.fit(self.color_data.get_X(), self.color_data.get_y())
-    
+        self.clf.fit(self.square_data.get_X(), self.square_data.get_y())
 
-    def predict(self, color):
-        Y = self.clf.predict(color)
+    def predict(self, square):
+        Y = self.clf.predict(square)
         return Y
 
     def predict_img(self):
+        y,x,c = self.img.shape
 
-        X = np.empty((self.img.shape[0] * self.img.shape[1], self.color_data.data_size))
+        num_x = x // X_SIZE
+        y_offset = 3
+        y_top_offset = 4
+        num_y = y // Y_SIZE
+        num_y = num_y - y_offset - y_top_offset # remove top 3 and bottom 4
+  
 
-        for x in range(self.window_size, self.img.shape[0] - self.window_size - 1):
-            for y in range(self.window_size, self.img.shape[1] - self.window_size - 1):
-                ndx = x + y * self.img.shape[0]
-                X[ndx] = self.capture_color(x,y)
+        X = np.empty((num_x * num_y, self.square_data.data_size))
+        for i in range(0, num_x):
+            for j in range(y_offset, num_y + y_offset):
+                ndx = (j - y_offset)  + i * num_y
+                X[ndx] = self.capture_square(i * X_SIZE, j * Y_SIZE)
 
         print("Predicting for Image")
         Y = self.predict(X)
         print("Converting to Color")
-        prediction_img = np.zeros(self.img.shape, dtype=np.uint8)
-        for x in range(self.window_size, self.img.shape[0] - self.window_size - 1):
-            for y in range(self.window_size, self.img.shape[1] - self.window_size - 1):
-                ndx = x + y * self.img.shape[0]
-                prediction_img[x,y] = ClassToColor.get(Y[ndx])
+
+
+        prediction_img = np.zeros(( y // Y_SIZE,num_x , c), dtype=np.uint8)
+        for i in range(0, num_x):
+            for j in range(y_offset, num_y + y_offset):
+                ndx = (j - y_offset)  + i * num_y
+                prediction_img[j,i ] = ClassToColor.get(Y[ndx])
+
+        prediction_img = cv2.resize(prediction_img, dsize=(400,300), interpolation=None)
 
         return prediction_img
 
@@ -165,30 +171,28 @@ def drawLines(img, x,y, offset_x, offset_y):
     return image
 
 
+def GrabScreenshot():
+
+    img = ImageGrab.grab(bbox=(0,80,800,680)) #bbox specifies specific region (bbox= x,y,width,height *starts top-left)
+    img_np = np.array(img) #this is the array obtained from conversion
+
+    # Warp the captured image
+    rows,cols, ch = img_np.shape
+    #                   TL       TR       BL        BR
+    pts1 = np.float32([[10,140],[685,43],[119,567],[805,467]])
+    pts2 = np.float32([[0,0],[rows,0],[0,cols],[rows,cols]])
+    M = cv2.getPerspectiveTransform(pts1,pts2)
+    img_np = cv2.warpPerspective(img_np,M,(rows,cols))
 
 
-img = ImageGrab.grab(bbox=(0,80,800,680)) #bbox specifies specific region (bbox= x,y,width,height *starts top-left)
-img_np = np.array(img) #this is the array obtained from conversion
+    img_np = cv2.resize(img_np, dsize=(400,300), interpolation=cv2.INTER_CUBIC)
 
-# Warp the captured image
-rows,cols, ch = img_np.shape
-print(rows,cols)
-#                   TL       TR       BL        BR
-pts1 = np.float32([[10,140],[685,43],[119,567],[805,467]])
-pts2 = np.float32([[0,0],[rows,0],[0,cols],[rows,cols]])
-M = cv2.getPerspectiveTransform(pts1,pts2)
-img_np = cv2.warpPerspective(img_np,M,(rows,cols))
+    # 13,11
+    # 300 / 11 ~= 27, 400 / 13 ~= 30
+    img_np = drawLines(img_np, X_SIZE, Y_SIZE, 0, 0)
+    return img_np
 
-
-#
-print(img_np.shape)
-img_np = cv2.resize(img_np, dsize=(400,300), interpolation=cv2.INTER_CUBIC)
-
-# 13,11
-# 600 / 11 ~= 27, 800 / 13 ~= 61
-img_np = drawLines(img_np, 13, 11, 0, 0)
-
-
+img_np = GrabScreenshot()
 frame = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
 cv2.imshow("test", frame)
 
@@ -196,14 +200,28 @@ cv2.imshow("test", frame)
 seg = Segmenter(img_np)
 cv2.namedWindow("test")
 cv2.setMouseCallback("test", seg.get_capture)
-
+live_prediction = False
 while(1):
-    k = cv2.waitKey(0) & 0xFF
+    k = cv2.waitKey(200) & 0xFF
+
+    if live_prediction:
+        img_np = GrabScreenshot()
+        seg.img = img_np
+        seg.fit_model()
+        prediction = seg.predict_img()
+        alpha = 0.1
+        beta = (1.0 - alpha)
+        print("Blending Images")
+        img_blend = cv2.addWeighted(img_np, alpha, prediction, beta, 0.0)
+        frame = cv2.cvtColor(img_blend, cv2.COLOR_BGR2RGB)
+        cv2.imshow("test", frame)
+
+
     if k == 27:
         break
     elif k == ord('p'):
         prediction = seg.predict_img()
-        alpha = 0.5
+        alpha = 0.1
         beta = (1.0 - alpha)
         print("Blending Images")
         img_blend = cv2.addWeighted(img_np, alpha, prediction, beta, 0.0)
@@ -213,7 +231,13 @@ while(1):
         seg.fit_model()
     elif k == ord('m'):
         seg.flip_mode()
-    else:
+    elif k == ord('x'):
+        frame = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
+        cv2.imshow("test", frame)
+        live_prediction = False
+    elif k == ord('l'):
+        live_prediction = not live_prediction
+    elif k in ColorClasses:
         seg.change_segment(k)
 
 
