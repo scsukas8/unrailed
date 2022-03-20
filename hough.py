@@ -57,6 +57,8 @@ def drawLines(img, x,y, offset_x, offset_y):
 
     return image
 
+C = np.pi * 2 / 13
+
 def GetOffset(img):
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray,50,150,apertureSize = 3)
@@ -66,21 +68,27 @@ def GetOffset(img):
     if len(lines) == 0:
         return 0
 
-    x_offset = Counter()
+    
     vert_lines = [l  for l in lines if is_vertical(l)]
-    if len(vert_lines) == 0:
+    if len(vert_lines) < 10:
         return 0
 
+    x = 0
+    y = 0
+    x_offset = []
     for line in vert_lines:
         rho,theta = line[0]
         a = np.cos(theta)
         b = np.sin(theta)
         x0 = a*rho
-        x1 = int(x0 + 1000*(-b))
+        x1 = (x0 + 1000*(-b))
+        x2 =  x1 * C
+        x_offset.append(x1)
+        x += np.cos(x2)
+        y += np.sin(x2)
 
-        offset = x1 % 13
-        x_offset[offset] += 1
-        
-        img = cv2.line(img, start, end, color, thickness)
+    print(x_offset)
+    x_offset = Counter(x_offset)
+    print(x_offset)
 
-    return avg_offset(x_offset.most_common(3))[0]
+    return np.arctan2(y,x) / C

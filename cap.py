@@ -271,8 +271,7 @@ class Segmenter:
         self.square_data.resize_if_full()
 
 
-def drawLines
-(img, x,y, offset_x, offset_y):
+def drawLines(img, x,y, offset_x, offset_y):
     # Black color in BGR 
     color = (0, 0, 0) 
       
@@ -349,6 +348,9 @@ def GrabScreenshot():
     t4 = time.time()
     print("Roll time - ", t4 - t3)
     """
+    print(GetOffset(img_np))
+    t3 = time.time()
+    print("Offset time - ", t3 - t2)
 
     return img_np
 
